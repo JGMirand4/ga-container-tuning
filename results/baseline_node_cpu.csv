@@ -1,0 +1,11 @@
+method,lang,endpoint,seed,gen,genes,ok,p95,p99,thr
+default,node,cpu,0,0,{},True,1.925791,2.1712998000000003,1817.5656166230578
+default,node,cpu,0,1,{},True,1.9135,2.1638922000000003,1848.026728753556
+default,node,cpu,0,2,{},True,1.904041,2.1665078,1784.393702049296
+default,node,cpu,0,3,{},True,1.914875,2.2069502,1814.7221580681085
+default,node,cpu,0,4,{},True,1.9345,2.1650668,1861.1986152904326
+manual,node,cpu,0,0,"{""cpus"": 4.0, ""mem_mb"": 1024, ""cpuset"": 4, ""workers"": 4}",True,1.3241499999999997,2.16175,6900.534111991677
+manual,node,cpu,0,1,"{""cpus"": 4.0, ""mem_mb"": 1024, ""cpuset"": 4, ""workers"": 4}",True,1.290292,2.1487830000000003,6805.849958187068
+manual,node,cpu,0,2,"{""cpus"": 4.0, ""mem_mb"": 1024, ""cpuset"": 4, ""workers"": 4}",True,1.32275,2.1473332,6629.846779129295
+manual,node,cpu,0,3,"{""cpus"": 4.0, ""mem_mb"": 1024, ""cpuset"": 4, ""workers"": 4}",True,1.322458,2.1446918,6777.931308180921
+manual,node,cpu,0,4,"{""cpus"": 4.0, ""mem_mb"": 1024, ""cpuset"": 4, ""workers"": 4}",True,1.323875,2.1385914,6702.125288296789

@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.DS_Store
+services/java/target/
+results/*.log
+results/convergence.png
+# smoke-test GA runs (not real experiment data)
+results/ga_*.csv
+results/random_*.csv
