@@ -7,3 +7,7 @@ results/**/convergence.png
 results/**/*.legacy
 # smoke-test runs (not real experiment data)
 results/**/smoke/
+# LaTeX build files
+paper/*
+!paper/artigo.tex
+!paper/artigo.pdf

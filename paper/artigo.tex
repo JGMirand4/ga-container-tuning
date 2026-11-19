@@ -1,0 +1,446 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[brazilian]{babel}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{siunitx}
+\usepackage{hyperref}
+\usepackage{caption}
+
+\sisetup{output-decimal-marker={,},group-separator={.},group-minimum-digits=4}
+\hypersetup{colorlinks=true,linkcolor=blue!50!black,citecolor=blue!50!black,urlcolor=blue!50!black}
+
+% Marcador de conteúdo que depende do experimento final no host Linux
+\newcommand{\pend}[1]{\textcolor{red}{[\textbf{PENDENTE:} #1]}}
+
+\title{Ajuste multiobjetivo de recursos de contêineres com NSGA-II:\\
+uma comparação entre Go, Java, Python e Node.js}
+\author{João Guilherme Miranda\\
+\small \pend{instituição, curso e disciplina}}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+A configuração de recursos de contêineres (limite de CPU, memória, núcleos e número de workers)
+costuma ser feita com valores padrão ou por tentativa e erro, embora afete diretamente a latência,
+a vazão e o custo de um serviço. Este trabalho investiga quanto um algoritmo genético multiobjetivo (NSGA-II)
+melhora o compromisso entre latência p95, vazão e custo de recursos de um mesmo serviço HTTP implementado em
+Go, Java, Python e Node.js, em comparação com a configuração padrão, uma configuração manual e a busca aleatória
+com o mesmo orçamento de avaliações. O desenho experimental usa carga em modelo aberto para medir latência e em modelo
+fechado para medir vazão, isola o gerador de carga em núcleos dedicados, reavalia de forma independente as configurações
+escolhidas para evitar o viés do vencedor e aplica testes não paramétricos com tamanho de efeito. Um estudo piloto
+mostrou que a vazão de saturação difere entre linguagens em até duas ordens de grandeza (de \SI{172}{req/s} em Python
+a \SI{12307}{req/s} em Go no endpoint de CPU). O piloto também revelou três ameaças à validade que motivaram o desenho
+final: sobrecarga não detectada, gerador de carga como gargalo e ruído de medição alto em ambiente virtualizado.
+\pend{resumir os resultados de H2 e H3 do experimento final}
+\end{abstract}
+
+\noindent\textbf{Palavras-chave:} análise de desempenho; contêineres; algoritmos genéticos; NSGA-II; otimização multiobjetivo.
+
+%======================================================================
+\section{Introdução}
+%======================================================================
+
+Plataformas de contêineres como Docker e Kubernetes permitem limitar a CPU e a memória de cada serviço e fixá-lo em
+núcleos específicos. Além desses limites, cada ambiente de execução tem seus próprios parâmetros de concorrência:
+\texttt{GOMAXPROCS} em Go, o tamanho do pool de threads em servidores Java, o número de processos do \emph{gunicorn}
+em Python e o número de processos do módulo \texttt{cluster} em Node.js. As interações entre esses parâmetros
+não são óbvias. Por exemplo, um limite de CPU menor que o número de threads ativas provoca \emph{throttling}, e
+um heap Java grande demais para o limite de memória provoca término por falta de memória (OOM). Na prática, é comum
+manter os valores padrão ou copiar uma configuração que funcionou em outro serviço.
+
+O espaço de configurações é discreto, combinatório e caro de avaliar: cada ponto exige subir o contêiner, aquecê-lo e
+submetê-lo a um teste de carga de dezenas de segundos. Além disso, os objetivos são conflitantes. Mais recursos
+reduzem a latência e aumentam a vazão, mas custam mais. Algoritmos evolutivos multiobjetivo, como o NSGA-II~\cite{deb2002},
+são candidatos naturais para esse tipo de problema, pois não exigem gradiente, lidam com variáveis categóricas e
+produzem uma frente de Pareto em vez de uma única solução.
+
+A pergunta de pesquisa deste trabalho é: \emph{quanto o NSGA-II melhora o compromisso entre latência, vazão e custo de
+um mesmo serviço em diferentes linguagens, em comparação com a configuração padrão, uma configuração manual e a busca
+aleatória com o mesmo orçamento?} As hipóteses são:
+
+\begin{description}
+  \item[H1] O desempenho (vazão de saturação e latência p95) varia significativamente entre linguagens, mesmo com configuração padrão.
+  \item[H2] O NSGA-II encontra frentes de Pareto melhores (maior hipervolume em p95 $\times$ vazão $\times$ custo) que a busca aleatória com o mesmo número de avaliações.
+  \item[H3] O ganho do ajuste em relação à configuração padrão depende da linguagem e do tipo de carga.
+\end{description}
+
+As contribuições são: (i)~um ambiente reprodutível com o mesmo serviço em quatro linguagens e um driver de experimento
+que retoma execuções interrompidas; (ii)~um desenho experimental que trata explicitamente o ruído, o viés do vencedor e
+os gargalos do gerador de carga; e (iii)~os resultados de um estudo piloto que mostram, com dados, por que esses
+cuidados são necessários.
+
+%======================================================================
+\section{Trabalhos relacionados}
+%======================================================================
+
+A literatura de análise de desempenho enfatiza que o desenho do experimento e da carga determina a validade das
+conclusões~\cite{jain1991}. Schroeder et~al.~\cite{schroeder2006} mostram que geradores de carga em modelo fechado,
+nos quais um novo pedido só é enviado após a resposta do anterior, subestimam a latência sob carga. Isso acontece
+porque o gerador desacelera junto com o sistema. Por esse motivo, este trabalho mede a latência com modelo aberto
+(taxa de chegada fixa) e usa o modelo fechado apenas para estimar a vazão máxima.
+
+A busca automática de configurações de sistemas tem diversos precedentes. O BestConfig~\cite{zhu2017} usa amostragem
+e busca local recursiva para ajustar parâmetros de sistemas como bancos de dados e servidores web. O
+CherryPick~\cite{alipourfard2017} usa otimização bayesiana para escolher configurações de máquinas virtuais em nuvem
+com poucas avaliações. Bergstra e Bengio~\cite{bergstra2012} mostram que a busca aleatória é uma baseline forte em
+espaços onde poucas dimensões importam, e por isso ela é usada aqui como o principal comparador do GA. A qualidade de
+frentes de Pareto é avaliada pelo hipervolume~\cite{zitzler1999}.
+
+Diferentemente desses trabalhos, o foco aqui é comparar \emph{linguagens} sob o mesmo procedimento de ajuste, para
+saber se o benefício do ajuste depende do ambiente de execução.
+
+%======================================================================
+\section{Metodologia}
+%======================================================================
+
+\subsection{Serviços e ambiente}
+
+O mesmo serviço HTTP foi implementado nas quatro linguagens, sempre com servidores de produção: \texttt{net/http} (Go~1.23),
+Undertow (Java~21), \emph{gunicorn} com workers \texttt{gthread} (Python~3.12) e \texttt{http} com \texttt{cluster} (Node.js~22).
+Ele tem dois endpoints:
+\begin{itemize}
+  \item \texttt{/cpu}: calcula $\mathrm{fib}(25)$ de forma recursiva, representando uma carga limitada por CPU;
+  \item \texttt{/io}: espera \SI{20}{ms} antes de responder, representando uma carga limitada por I/O, como uma consulta a um banco de dados.
+\end{itemize}
+A versão inicial em Java usava o \texttt{HttpServer} embutido no JDK, que limitava a vazão a cerca de um décimo da
+obtida com o Undertow (\SI{1495}{} contra \SI{15286}{req/s} no \texttt{/cpu}). Ela foi substituída para que a comparação
+entre linguagens refletisse o ambiente de execução, e não a escolha de um servidor inadequado.
+
+O experimento final roda em um host Linux dedicado com 8 núcleos: o serviço fica nos núcleos 0--3 e o gerador de carga
+(k6~0.54) nos núcleos 4--7, para que os dois nunca disputem CPU. O governor de frequência fica em \texttt{performance}
+e as imagens base são fixadas por digest. \pend{modelo do processador, memória, versão do kernel e do Docker}
+
+\subsection{Espaço de busca}
+
+Cada configuração (genoma) tem os genes da Tabela~\ref{tab:genes}, codificados como índices em listas de valores
+discretos. Uma função de reparo garante que \texttt{cpus} não exceda o número de núcleos fixados e impõe
+\SI{256}{MB} de memória mínima ao Java. O espaço tem $10 \times 9 \times 4 \times 8 = 2880$ combinações (antes do
+reparo) para Go, Python e Node, e $17280$ para Java.
+
+\begin{table}[ht]
+\centering
+\caption{Genes do cromossomo e sua tradução em cada linguagem.}
+\label{tab:genes}
+\begin{tabular}{llp{6.2cm}}
+\toprule
+Gene & Valores & Efeito \\
+\midrule
+\texttt{cpus} & 0,25 a 4,0 (10 níveis) & \texttt{docker --cpus} (cota do CFS) \\
+\texttt{mem\_mb} & 128 a 2048 (9 níveis, log) & \texttt{docker --memory}, sem swap \\
+\texttt{cpuset} & 1 a 4 núcleos & \texttt{docker --cpuset-cpus 0-(n-1)} \\
+\texttt{workers} & 1 a 16 (8 níveis) & \texttt{GOMAXPROCS}, pool do Undertow, workers do gunicorn ou do \texttt{cluster} \\
+\texttt{heap\_pct} & 25 a 80\% (só Java) & \texttt{-XX:MaxRAMPercentage} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Medição de uma configuração}
+
+A avaliação de uma configuração segue estes passos:
+\begin{enumerate}
+  \item sobe o contêiner com os limites do genoma e espera o endpoint \texttt{/health} responder;
+  \item aquece por \SI{15}{s} na taxa de chegada fixa $\lambda$ (medição descartada);
+  \item roda 2 repetições de \SI{20}{s} em modelo aberto na taxa $\lambda$ e registra a mediana do p95, do p99, da fração de erros e da fração de chegadas descartadas;
+  \item roda \SI{10}{s} em modelo fechado (64 usuários virtuais no \texttt{/cpu} e 1024 no \texttt{/io}) e registra a vazão de respostas bem-sucedidas;
+  \item remove o contêiner, de modo que cada avaliação começa de um estado limpo.
+\end{enumerate}
+A taxa $\lambda$ de cada par (linguagem, endpoint) é $50\%$ da vazão de saturação da configuração padrão, medida na
+calibração. O número de usuários virtuais no \texttt{/io} é alto porque, com 64 usuários e \SI{20}{ms} por pedido, o
+teto mensurável seria $64/0{,}02 = \SI{3200}{req/s}$, e o limite medido seria o do gerador, não o do serviço.
+A CPU do gerador também é amostrada em cada teste.
+
+Configurações com OOM, crash ou mais de 5\% de erros são marcadas como inválidas e recebem fitness de penalidade.
+Chegadas que o serviço não absorve (descartadas pelo k6) penalizam a fitness de forma gradual:
+\begin{equation}
+  p95_{\text{fit}} = p95 \times (1 + 10\,d),
+\end{equation}
+em que $d$ é a fração de chegadas descartadas. Assim, configurações subdimensionadas recebem uma fitness graduada,
+e não um valor constante, o que dá sinal ao algoritmo. O p95 bruto é armazenado separadamente e é o único usado nas análises.
+
+\subsection{Objetivos e algoritmos}
+
+As duas buscas minimizam três objetivos:
+\begin{equation}
+  \min \; \big( p95_{\text{fit}},\; -\text{vazão},\; \text{custo} \big), \qquad \text{custo} = \texttt{cpus} + \texttt{mem\_mb}/1024,
+\end{equation}
+com o custo em unidades de vCPU + GB, como em provedores de nuvem. O objetivo de custo é essencial: sem ele, os dois
+objetivos de desempenho seriam otimizados simplesmente dando todos os recursos ao contêiner, e a busca seria trivial.
+A configuração padrão, sem limites, é cobrada como a fatia inteira do serviço: 4 núcleos + \SI{2}{GB} = 6.
+
+O NSGA-II~\cite{deb2002} usa população de 12 indivíduos por 8 gerações (96 avaliações), seleção por torneio binário
+com ordenação não dominada e distância de \emph{crowding}, cruzamento uniforme e mutação por gene com probabilidade
+$1/n_{\text{genes}}$. A mutação sorteia, com igual chance, um passo para um nível vizinho ou um nível aleatório.
+A busca aleatória sorteia 96 genomas uniformemente, com o mesmo reparo. Genomas repetidos numa mesma execução são
+medidos uma única vez, mas contam no orçamento. Cada método roda com 5 sementes por par (linguagem, endpoint).
+
+\subsection{Baselines, SLO e reavaliação}
+
+As baselines são:
+\begin{itemize}
+  \item a configuração \textbf{padrão}: sem limites de CPU ou memória, sem variáveis de ajuste e fixada nos núcleos 0--3;
+  \item a configuração \textbf{manual}: 4 CPUs, \SI{1}{GB} e 4 workers (heap de 70\% no Java);
+  \item a configuração padrão a uma \textbf{taxa comum} a todas as linguagens (50\% da saturação da mais lenta), para comparar latências sob a mesma carga absoluta.
+\end{itemize}
+Cada baseline é repetida 10 vezes. A configuração manual de Go é praticamente idêntica à padrão, o que fornece um
+teste A/A para estimar o ruído de medição.
+
+O SLO de cada par é $p95 \le 2 \times$ o p95 mediano da configuração padrão, sem chegadas descartadas. Ele define a
+pergunta operacional do H3: \emph{qual o menor custo que atende a mesma carga com latência comparável à padrão?}
+
+O menor p95 observado entre 96 medições ruidosas é um estimador otimista, porque o vencedor é em parte sorte (viés
+do vencedor). Por isso, ao fim de cada busca são escolhidas duas configurações, a de menor $p95_{\text{fit}}$ e a mais
+barata que atendeu o SLO. Cada uma é remedida 5 vezes, em contêineres novos, e o H3 usa somente essas remedições.
+
+\subsection{Análise estatística}
+
+Como as distribuições de latência são assimétricas e as amostras pequenas, são usados testes não paramétricos:
+\begin{itemize}
+  \item \textbf{H1:} teste de Kruskal-Wallis~\cite{kruskal1952} entre linguagens, por endpoint, com tamanho de efeito
+    $\varepsilon^2 = (H - k + 1)/(n - k)$~\cite{tomczak2014}, e delta de Cliff~\cite{cliff1993} par a par.
+  \item \textbf{H2:} hipervolume~\cite{zitzler1999} 3-D por semente, com os objetivos ($\log p95$, vazão e custo) normalizados
+    para $[0,1]$ no conjunto de todos os pontos do par e ponto de referência $(1{,}1;\,1{,}1;\,1{,}1)$. Os hipervolumes do
+    GA e da busca aleatória são comparados com o teste de Mann-Whitney~\cite{mann1947} unilateral e o delta de Cliff.
+  \item \textbf{H3:} redução relativa da mediana do p95 em relação à padrão, com intervalo de confiança de 95\% por
+    bootstrap~\cite{efron1979} (5000 reamostragens), e economia de custo da configuração mais barata dentro do SLO.
+    A dependência em relação à linguagem é testada com Kruskal-Wallis sobre os ganhos por semente.
+\end{itemize}
+O nível de significância é $\alpha = 0{,}05$. Com 5 sementes por método, o menor $p$-valor possível do Mann-Whitney
+unilateral é $1/\binom{10}{5} \approx 0{,}004$. Com 2 sementes ele seria $\approx 0{,}17$, o que tornaria o H2 impossível de testar.
+
+Antes das buscas, três verificações de qualidade são aplicadas às baselines: coeficiente de variação das repetições
+abaixo de 10\%, taxa $\lambda$ abaixo de 80\% da vazão medida da configuração padrão e CPU do gerador abaixo de 75\% dos seus 4 núcleos.
+
+\subsection{Orçamento de tempo}
+
+Cada avaliação leva cerca de \SI{85}{s}. Com 4 linguagens, 2 endpoints, 2 métodos e 5 sementes de 96 avaliações,
+mais baselines e reavaliações, o experimento completo leva cerca de 203 horas (8,5 dias). Restrito ao endpoint
+\texttt{/cpu}, cerca de 102 horas. \pend{escopo efetivamente executado}
+
+%======================================================================
+\section{Estudo piloto}
+%======================================================================
+
+O pipeline foi validado de ponta a ponta no Docker Desktop do macOS, que roda os contêineres numa máquina virtual.
+Esses dados não servem como resultado final, mas foram decisivos para o desenho descrito acima. No piloto, a taxa
+de chegada era 60\% da saturação, havia 64 usuários virtuais em todos os testes de saturação, cada configuração era
+medida 5 vezes e o p95 registrado ainda incluía a penalização por chegadas descartadas. A Tabela~\ref{tab:piloto}
+resume as baselines.
+
+\begin{table}[ht]
+\centering
+\caption{Baselines do estudo piloto (Docker Desktop, macOS; 5 repetições). p95 em ms (mediana, com penalização);
+vazão em req/s (mediana); CV = coeficiente de variação do p95.}
+\label{tab:piloto}
+\small
+\begin{tabular}{llrrrrrr}
+\toprule
+ & & & \multicolumn{3}{c}{Padrão} & \multicolumn{2}{c}{Manual} \\
+\cmidrule(lr){4-6}\cmidrule(lr){7-8}
+Endpoint & Linguagem & $\lambda$ (req/s) & p95 & vazão & CV p95 & p95 & vazão \\
+\midrule
+\texttt{/cpu} & Go     & 8347 & 1,89   & 12307 & 167\% & 108,13 & 10675 \\
+              & Java   & 8658 & 795,12 & 6004  & 34\%  & 437,67 & 6317 \\
+              & Node   & 1067 & 1,55   & 1843  & 9\%   & 1,26   & 6454 \\
+              & Python & 102  & 6,26   & 172   & 2\%   & 6,21   & 590 \\
+\midrule
+\texttt{/io}  & Go     & 1578 & 23,32  & 2529  & 75\%  & 23,04  & 2458 \\
+              & Java   & 895  & 22,20  & 1458  & 1\%   & 24022,42 & 179 \\
+              & Node   & 1405 & 22,81  & 2288  & 1\%   & 23,20  & 2604 \\
+              & Python & 101  & 29,02  & 167   & 1\%   & 26,89  & 716 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Mesmo no piloto, a diferença entre linguagens na configuração padrão foi significativa. No \texttt{/cpu}, a vazão
+de saturação deu $H = 17{,}86$, $p < 0{,}001$ e $\varepsilon^2 = 0{,}93$, com delta de Cliff $= \pm 1$ em todos os pares,
+ou seja, nenhuma sobreposição entre as amostras. A vazão vai de \SI{172}{req/s} (Python) a \SI{12307}{req/s} (Go).
+O piloto também revelou quatro problemas:
+
+\begin{enumerate}
+  \item \textbf{Sobrecarga não detectada.} A calibração mediu \SI{14430}{req/s} para o Java no \texttt{/cpu} e fixou
+    $\lambda = \SI{8658}{req/s}$, mas nas baselines a vazão medida foi de apenas \SI{6004}{req/s}. O serviço foi
+    medido a 144\% da própria capacidade, o que explica o p95 de centenas de milissegundos. Daí a verificação
+    automática $\lambda / \text{vazão} \le 80\%$.
+  \item \textbf{Ruído alto.} As configurações padrão e manual de Go são praticamente idênticas, mas o p95 variou de
+    \SI{1,2}{ms} a \SI{495}{ms}, e numa das repetições a vazão caiu para \SI{18}{req/s}. Com esse nível de ruído, um
+    algoritmo de busca seleciona configurações por sorte. Daí o teste A/A obrigatório antes das buscas e a reavaliação independente.
+  \item \textbf{Gerador como gargalo.} No \texttt{/io}, a vazão de Go (\SI{2529}{req/s}) e de Node (\SI{2288}{req/s}) estava
+    perto do teto de \SI{3200}{req/s} imposto pelos 64 usuários virtuais. Daí os 1024 usuários no desenho final.
+  \item \textbf{Configuração manual ingênua.} No Java, 4 threads bloqueantes com espera de \SI{20}{ms} têm teto de
+    \SI{200}{req/s}, contra uma taxa de \SI{895}{req/s}. O p95 chegou a \SI{24}{s}. Esse é um achado legítimo: um
+    ajuste manual aparentemente razoável pode piorar o serviço em três ordens de grandeza.
+\end{enumerate}
+
+%======================================================================
+\section{Resultados}
+%======================================================================
+
+\pend{preencher com a saída de \texttt{analysis/analyze.py} sobre os dados do host Linux}
+
+\subsection{Qualidade das medições}
+\pend{CV das baselines, razão $\lambda$/vazão e CPU do k6; indicar se algum par foi recalibrado}
+
+\subsection{H1: diferenças entre linguagens}
+
+\begin{table}[ht]
+\centering
+\caption{Configuração padrão no host Linux (10 repetições).}
+\label{tab:h1}
+\begin{tabular}{llrrr}
+\toprule
+Endpoint & Linguagem & vazão (req/s) & p95 a 50\% (ms) & p95 taxa comum (ms) \\
+\midrule
+\texttt{/cpu} & Go & \pend{} & & \\
+ & Java & & & \\
+ & Node & & & \\
+ & Python & & & \\
+\midrule
+\texttt{/io} & Go & & & \\
+ & Java & & & \\
+ & Node & & & \\
+ & Python & & & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\pend{$H$, $p$ e $\varepsilon^2$ por métrica e endpoint; deltas de Cliff par a par}
+
+\subsection{H2: NSGA-II contra busca aleatória}
+
+\begin{table}[ht]
+\centering
+\caption{Hipervolume normalizado (média de 5 sementes) e teste de Mann-Whitney unilateral (GA $>$ aleatória).}
+\label{tab:h2}
+\begin{tabular}{llrrrr}
+\toprule
+Endpoint & Linguagem & HV GA & HV aleatória & $p$ & $\delta$ de Cliff \\
+\midrule
+\texttt{/cpu} & Go & \pend{} & & & \\
+ & Java & & & & \\
+ & Node & & & & \\
+ & Python & & & & \\
+\midrule
+\texttt{/io} & Go & & & & \\
+ & Java & & & & \\
+ & Node & & & & \\
+ & Python & & & & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[ht]
+\centering
+% \includegraphics[width=\linewidth]{../results/convergence.png}
+\fbox{\parbox{0.9\linewidth}{\centering\vspace{2cm}\pend{figura \texttt{results/convergence.png}}\vspace{2cm}}}
+\caption{Melhor $p95_{\text{fit}}$ ao longo das avaliações, por semente. Azul: NSGA-II; cinza: busca aleatória.}
+\label{fig:conv}
+\end{figure}
+
+\subsection{H3: ganho em relação à configuração padrão}
+
+\begin{table}[ht]
+\centering
+\caption{Resultados das remedições independentes (5 por configuração escolhida).}
+\label{tab:h3}
+\begin{tabular}{llrrr}
+\toprule
+Endpoint & Linguagem & redução do p95 [IC 95\%] & economia de custo & atende o SLO \\
+\midrule
+\texttt{/cpu} & Go & \pend{} & & \\
+ & Java & & & \\
+ & Node & & & \\
+ & Python & & & \\
+\midrule
+\texttt{/io} & Go & & & \\
+ & Java & & & \\
+ & Node & & & \\
+ & Python & & & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\pend{Kruskal-Wallis entre linguagens sobre os ganhos por semente; configurações encontradas (ex.: valor de \texttt{workers} e \texttt{cpus} típico por linguagem)}
+
+%======================================================================
+\section{Discussão}
+%======================================================================
+
+\pend{interpretar H1--H3 à luz dos resultados}
+
+Algumas expectativas podem ser formuladas antes dos resultados. As configurações padrão de Python (1 worker com
+4 threads) e de Node (1 processo) usam essencialmente um núcleo. Nessas linguagens, boa parte do ganho deve vir apenas de
+aumentar \texttt{workers}, o que favorece o H3 por construção, mas reflete o comportamento real dessas plataformas.
+Em Go e Java, que já usam todos os núcleos visíveis por padrão, espera-se que o ganho venha sobretudo da \emph{redução
+de custo} sob o SLO, e não da latência. Como os endpoints não alocam memória, o gene \texttt{mem\_mb} deve convergir
+para o menor valor que não provoca OOM, exceto no Java, onde ele interage com \texttt{heap\_pct}.
+
+\subsection{Ameaças à validade}
+
+\begin{itemize}
+  \item \textbf{Validade interna:} o ruído de medição pode mascarar diferenças entre configurações. Isso é mitigado pelo
+    isolamento de núcleos, pelo governor fixo, pelo teste A/A, pelas repetições e pela reavaliação independente. O cache
+    de genomas repetidos pode preservar uma medição sortuda dentro de uma execução; a reavaliação corrige isso nas conclusões.
+  \item \textbf{Validade de construto:} os endpoints são sintéticos. O \texttt{/io} simula a espera sem um banco de dados
+    real, e o \texttt{/cpu} não exercita o coletor de lixo. O custo ignora o valor de mercado relativo entre CPU e memória.
+  \item \textbf{Validade externa:} os resultados valem para um host de 8 núcleos, um único serviço por vez e as versões
+    de linguagem e servidor usadas; não necessariamente se estendem a clusters Kubernetes com vizinhos ruidosos.
+  \item \textbf{Validade de conclusão:} 5 sementes por método dão poder estatístico limitado. Por isso, os tamanhos de
+    efeito são reportados junto com os $p$-valores.
+\end{itemize}
+
+%======================================================================
+\section{Conclusão}
+%======================================================================
+
+Este trabalho apresentou um ambiente e um desenho experimental para avaliar o ajuste multiobjetivo de recursos de
+contêineres em quatro linguagens. O estudo piloto confirmou diferenças grandes de desempenho entre linguagens e mostrou
+que medir sem verificações de qualidade leva a conclusões erradas: um serviço sobrecarregado sem que ninguém perceba,
+ruído maior que o efeito a medir e um gerador de carga que limita o que se mede. \pend{conclusões de H2 e H3}
+
+Como trabalhos futuros, ficam a inclusão de um endpoint que aloque memória (para exercitar o coletor de lixo), o uso de
+um banco de dados real no endpoint de I/O, a comparação com otimização bayesiana~\cite{alipourfard2017} e a execução
+num cluster Kubernetes.
+
+\paragraph{Disponibilidade.} O código, os scripts de carga e os dados estão em
+\url{https://github.com/JGMirand4/ga-container-tuning}.
+
+%======================================================================
+\begin{thebibliography}{99}
+\bibitem{alipourfard2017} O.~Alipourfard, H.~H. Liu, J.~Chen, S.~Venkataraman, M.~Yu e M.~Zhang.
+  CherryPick: adaptively unearthing the best cloud configurations for big data analytics.
+  In \emph{14th USENIX Symposium on Networked Systems Design and Implementation (NSDI)}, 2017.
+\bibitem{bergstra2012} J.~Bergstra e Y.~Bengio. Random search for hyper-parameter optimization.
+  \emph{Journal of Machine Learning Research}, 13:281--305, 2012.
+\bibitem{cliff1993} N.~Cliff. Dominance statistics: ordinal analyses to answer ordinal questions.
+  \emph{Psychological Bulletin}, 114(3):494--509, 1993.
+\bibitem{deb2002} K.~Deb, A.~Pratap, S.~Agarwal e T.~Meyarivan. A fast and elitist multiobjective genetic algorithm: NSGA-II.
+  \emph{IEEE Transactions on Evolutionary Computation}, 6(2):182--197, 2002.
+\bibitem{efron1979} B.~Efron. Bootstrap methods: another look at the jackknife.
+  \emph{The Annals of Statistics}, 7(1):1--26, 1979.
+\bibitem{jain1991} R.~Jain. \emph{The Art of Computer Systems Performance Analysis: Techniques for Experimental Design,
+  Measurement, Simulation, and Modeling}. Wiley, 1991.
+\bibitem{kruskal1952} W.~H. Kruskal e W.~A. Wallis. Use of ranks in one-criterion variance analysis.
+  \emph{Journal of the American Statistical Association}, 47(260):583--621, 1952.
+\bibitem{mann1947} H.~B. Mann e D.~R. Whitney. On a test of whether one of two random variables is stochastically larger than the other.
+  \emph{The Annals of Mathematical Statistics}, 18(1):50--60, 1947.
+\bibitem{schroeder2006} B.~Schroeder, A.~Wierman e M.~Harchol-Balter. Open versus closed: a cautionary tale.
+  In \emph{3rd USENIX Symposium on Networked Systems Design and Implementation (NSDI)}, 2006.
+\bibitem{tomczak2014} M.~Tomczak e E.~Tomczak. The need to report effect size estimates revisited: an overview of some
+  recommended measures of effect size. \emph{Trends in Sport Sciences}, 21(1):19--25, 2014.
+\bibitem{zhu2017} Y.~Zhu, J.~Liu, M.~Guo, Y.~Bao, W.~Ma, Z.~Liu, K.~Song e Y.~Yang.
+  BestConfig: tapping the performance potential of systems via automatic configuration tuning.
+  In \emph{ACM Symposium on Cloud Computing (SoCC)}, 2017.
+\bibitem{zitzler1999} E.~Zitzler e L.~Thiele. Multiobjective evolutionary algorithms: a comparative case study and the
+  strength Pareto approach. \emph{IEEE Transactions on Evolutionary Computation}, 3(4):257--271, 1999.
+\end{thebibliography}
+
+\end{document}
