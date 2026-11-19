@@ -1,0 +1,10 @@
+method,lang,endpoint,seed,gen,pick,genes,rate,ok,p95,p99,drop,fail,p95_fit,thr,cost,k6_cpu
+random,python,cpu,1,0,best_p95,"{""cpus"": 1.0, ""mem_mb"": 192, ""cpuset"": 1, ""workers"": 12}",86,True,7.3910084,9.747648879999996,0,0,7.3910084,150.19942234344964,1.1875,1.87
+random,python,cpu,1,0,min_cost_slo,"{""cpus"": 0.75, ""mem_mb"": 192, ""cpuset"": 3, ""workers"": 1}",86,True,6.6079584,6.89605008,0,0,6.6079584,121.15614833380572,0.9375,1.67
+random,python,cpu,1,0,default,{},86,True,6.4784,6.73056696,0,0,6.4784,161.52586982838443,6.0,1.69
+random,python,cpu,1,1,best_p95,"{""cpus"": 1.0, ""mem_mb"": 192, ""cpuset"": 1, ""workers"": 12}",86,True,6.478267,6.78567992,0,0,6.478267,160.01567141527812,1.1875,1.8
+random,python,cpu,1,1,min_cost_slo,"{""cpus"": 0.75, ""mem_mb"": 192, ""cpuset"": 3, ""workers"": 1}",86,True,6.4657662,6.65716696,0,0,6.4657662,114.19670902185376,0.9375,1.74
+random,python,cpu,1,1,default,{},86,True,6.6917334,7.02625896,0,0,6.6917334,161.52902876590156,6.0,2.26
+random,python,cpu,1,2,best_p95,"{""cpus"": 1.0, ""mem_mb"": 192, ""cpuset"": 1, ""workers"": 12}",86,True,6.431958,6.855608919999998,0,0,6.431958,160.173095717359,1.1875,1.78
+random,python,cpu,1,2,min_cost_slo,"{""cpus"": 0.75, ""mem_mb"": 192, ""cpuset"": 3, ""workers"": 1}",86,True,6.4391084,6.68447396,0,0,6.4391084,121.69618357481968,0.9375,1.64
+random,python,cpu,1,2,default,{},86,True,6.557758,6.85492687,0,0,6.557758,161.91522109167929,6.0,1.78

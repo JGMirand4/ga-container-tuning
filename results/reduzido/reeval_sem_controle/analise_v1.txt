@@ -1,0 +1,47 @@
+results: /Users/joaogui/Projects/FACULDADE/ga-container-tuning/results/reduzido
+
+== Quality checks
+-- coefficient of variation of repeated baseline runs (warn > 10%)
+  go     cpu default        CV p95= 84.8%  CV thr= 22.4%  <-- noisy
+  go     cpu default_common CV p95=  5.7%  CV thr=  3.3%
+  go     cpu manual         CV p95= 12.3%  CV thr=  1.1%  <-- noisy
+  python cpu default        CV p95=  2.2%  CV thr=  2.0%
+  python cpu default_common CV p95=  4.7%  CV thr=  0.7%
+  python cpu manual         CV p95=  2.3%  CV thr=  3.7%
+-- arrival rate vs measured default throughput (warn > 80%)
+  go     cpu rate=6936 thr=9298 ratio=75%
+  python cpu rate=86 thr=171 ratio=50%
+-- k6 CPU: max 136%, 0.0% of evaluations above 300%
+-- invalid search evaluations (OOM/crash/>5% errors): 20
+
+== H1: default config across languages (Kruskal-Wallis, effect size eps^2)
+  cpu p95 @ 50% of own capacity: H=0.00 p=1 eps2=0.00
+  cpu saturation throughput: H=5.33 p=0.0209 eps2=0.72
+  cpu p95 @ common rate 86 req/s: H=5.33 p=0.0209 eps2=0.72
+        p95_median  thr_median  p95_common
+lang                                      
+go            4.10     9298.40        1.82
+python        6.39      170.77        6.44
+  pairwise Cliff's delta of saturation throughput (row vs col):
+    go vs python: +1.00
+
+== H2: GA vs random search, normalised 3-D hypervolume (p95, throughput, cost) per seed
+  go/cpu: HV ga=0.585 (n=3) random=0.528 (n=3)  MWU(ga>random) p=0.5 cliffs=+0.11
+      cheapest config meeting SLO p95<=8.2ms during search (median over seeds): ga=5.00 random=3.19 (default=6.00)
+  python/cpu: HV ga=0.719 (n=3) random=0.629 (n=3)  MWU(ga>random) p=0.35 cliffs=+0.33
+      cheapest config meeting SLO p95<=12.8ms during search (median over seeds): ga=1.12 random=0.94 (default=6.00)
+
+== H3: gain over the default config, re-measured independently (reeval_*.csv)
+  go/cpu ga     best_p95: p95 --12268.7% [95% CI -51817.0%, -4823.6%] vs default (MWU p=0.0028, cliffs=+1.00), throughput -51.8%
+  go/cpu ga     min_cost_slo: cost 5.00 (17% below default), meets SLO in 0% of re-measurements
+  go/cpu random best_p95: p95 --9913.6% [95% CI -39207.0%, -4875.5%] vs default (MWU p=0.0028, cliffs=+1.00), throughput -56.4%
+  go/cpu random min_cost_slo: cost 3.19 (47% below default), meets SLO in 0% of re-measurements
+  python/cpu ga     best_p95: p95 --2.2% [95% CI -6.5%, 2.1%] vs default (MWU p=0.0755, cliffs=+0.67), throughput +64.5%
+  python/cpu ga     min_cost_slo: cost 1.12 (81% below default), meets SLO in 89% of re-measurements
+  python/cpu random best_p95: p95 --5.0% [95% CI -16.9%, -0.6%] vs default (MWU p=0.0196, cliffs=+0.83), throughput -2.0%
+  python/cpu random min_cost_slo: cost 0.94 (84% below default), meets SLO in 100% of re-measurements
+  -- does the GA gain depend on the language? (Kruskal-Wallis over per-seed GA gains)
+    cpu p95_gain: {'go': '-13126%', 'python': '-2%'}  H=3.86 p=0.0495 eps2=0.71
+    cpu cost_saving: {'go': '17%', 'python': '81%'}  H=1.80 p=0.18 eps2=0.40
+
+saved /Users/joaogui/Projects/FACULDADE/ga-container-tuning/results/reduzido/convergence.png

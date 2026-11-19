@@ -97,10 +97,10 @@ def calibrate(args):
             rates[f"{lang}/{ep}"] = max(1, round(args.rate_frac * sat))
             rates[f"sat/{lang}/{ep}"] = round(sat, 1)
             print(lang, ep, "sat rps", [round(s) for s in sats], "-> rate", rates[f"{lang}/{ep}"])
-    # Common rate per endpoint (same absolute load for every language, for H1): fraction of the slowest one
+    # Common rate per endpoint (same absolute load for every calibrated language, for H1): fraction of the slowest
     for ep in ENDPOINTS:
-        sats = [rates.get(f"sat/{lang}/{ep}") for lang in LANGS]
-        if all(sats):
+        sats = [v for k, v in rates.items() if k.startswith("sat/") and k.endswith(f"/{ep}")]
+        if len(sats) >= 2:
             rates[f"common/{ep}"] = max(1, round(args.rate_frac * min(sats)))
             print("common rate", ep, rates[f"common/{ep}"])
     with open(rates_path(args), "w") as f:
@@ -198,15 +198,18 @@ def run_reeval(lang, ep, rates, args):
                 continue
             picks = picks_of(src, slo)
             opened = open_csv(os.path.join(args.results, f"reeval_{method}_{lang}_{ep}_s{seed}.csv"),
-                              len(picks) * args.repeats)
+                              (len(picks) + 1) * args.repeats)
             if not opened:
                 continue
             log, f = opened
-            for pick, r in picks.items():
-                genome = genome_from_values(json.loads(r["genes"]))
-                for i in range(args.repeats):  # fresh container each time: independent measurements
-                    res = runner.evaluate(lang, ep, genome, rates[f"{lang}/{ep}"])
-                    log(**row(method, lang, ep, seed, i, genome, rates[f"{lang}/{ep}"], res, pick=pick))
+            # Each round re-measures the picks AND the default config side by side (paired control),
+            # so a slow drift of the host (thermal, background load) hits both and cancels in the comparison.
+            todo = [(p, genome_from_values(json.loads(r["genes"]))) for p, r in picks.items()] + [("default", None)]
+            rate = rates[f"{lang}/{ep}"]
+            for i in range(args.repeats):  # fresh container each time: independent measurements
+                for pick, genome in todo:
+                    res = runner.evaluate(lang, ep, genome, rate)
+                    log(**row(method, lang, ep, seed, i, genome, rate, res, pick=pick))
                     show(f"reeval {method} {lang} {ep} s{seed} {pick} #{i}", res)
             f.close()
 
@@ -219,7 +222,7 @@ def plan(args):
         "calibrate": n * (8 + runner.T["warmup"] + 3 * 15 + 12),
         "baseline": n * 3 * args.repeats * e,
         "ga + random (upper bound; the cache saves repeated genomes)": searches * args.pop * args.gens * e,
-        "reeval": searches * len(PICKS) * args.repeats * e,
+        "reeval": searches * (len(PICKS) + 1) * args.repeats * e,
     }
     print(f"~{e:.0f} s per evaluation, {n} (lang, endpoint) pairs, {searches} searches of {args.pop * args.gens} evals")
     for k, s in parts.items():

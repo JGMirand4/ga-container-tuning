@@ -21,9 +21,9 @@
 
 \title{Ajuste multiobjetivo de recursos de contêineres com NSGA-II:\\
 uma comparação entre Go, Java, Python e Node.js}
-\author{João Guilherme Miranda\\
-\small \pend{instituição, curso e disciplina}}
-\date{\today}
+\author{João Guilherme M. S. Bispo \qquad Higor Cordeiro\\[4pt]
+\small Universidade Federal Rural de Pernambuco (UFRPE) --- Análise de Desempenho}
+\date{19 de novembro de 2026}
 
 \begin{document}
 \maketitle
@@ -40,7 +40,12 @@ escolhidas para evitar o viés do vencedor e aplica testes não paramétricos co
 mostrou que a vazão de saturação difere entre linguagens em até duas ordens de grandeza (de \SI{172}{req/s} em Python
 a \SI{12307}{req/s} em Go no endpoint de CPU). O piloto também revelou três ameaças à validade que motivaram o desenho
 final: sobrecarga não detectada, gerador de carga como gargalo e ruído de medição alto em ambiente virtualizado.
-\pend{resumir os resultados de H2 e H3 do experimento final}
+Um experimento reduzido (Go e Python, endpoint de CPU, 3 sementes) confirmou o H1: a vazão de Go foi 54 vezes a de
+Python ($p = 0{,}02$, $\varepsilon^2 = 0{,}72$). O NSGA-II obteve hipervolume maior que a busca aleatória nos dois casos,
+mas sem significância com 3 sementes. Remedido ao lado da configuração padrão, o ajuste não reduziu a latência, mas em
+Python cortou o custo em 81\% mantendo o SLO na mesma proporção que a padrão; em Go, só a configuração com 3,5 CPUs se
+sustentou (17\% mais barata), e as demais escolhidas pela busca eram fruto do viés do vencedor. O experimento também
+mostrou que uma reavaliação sem controle pareado pode atribuir à configuração uma degradação que era do host.
 \end{abstract}
 
 \noindent\textbf{Palavras-chave:} análise de desempenho; contêineres; algoritmos genéticos; NSGA-II; otimização multiobjetivo.
@@ -117,7 +122,12 @@ entre linguagens refletisse o ambiente de execução, e não a escolha de um ser
 
 O experimento final roda em um host Linux dedicado com 8 núcleos: o serviço fica nos núcleos 0--3 e o gerador de carga
 (k6~0.54) nos núcleos 4--7, para que os dois nunca disputem CPU. O governor de frequência fica em \texttt{performance}
-e as imagens base são fixadas por digest. \pend{modelo do processador, memória, versão do kernel e do Docker}
+e as imagens base são fixadas por digest.
+
+O experimento reduzido da Seção~\ref{sec:resultados} não teve acesso a esse host e rodou num Apple M2 (8 núcleos,
+\SI{8}{GB}) com macOS~26.7 e Docker Desktop~28.3, cuja máquina virtual Linux (kernel 6.10) tem 8 vCPUs e \SI{5,8}{GB}.
+A mesma divisão de núcleos foi aplicada dentro da máquina virtual, mas o hipervisor e o macOS continuam competindo pelos
+núcleos físicos, e o governor de frequência não pode ser fixado. Esse ambiente é mais ruidoso, e isso aparece nos resultados.
 
 \subsection{Espaço de busca}
 
@@ -183,6 +193,7 @@ A busca aleatória sorteia 96 genomas uniformemente, com o mesmo reparo. Genomas
 medidos uma única vez, mas contam no orçamento. Cada método roda com 5 sementes por par (linguagem, endpoint).
 
 \subsection{Baselines, SLO e reavaliação}
+\label{sec:metodologia-reavaliacao}
 
 As baselines são:
 \begin{itemize}
@@ -199,6 +210,12 @@ pergunta operacional do H3: \emph{qual o menor custo que atende a mesma carga co
 O menor p95 observado entre 96 medições ruidosas é um estimador otimista, porque o vencedor é em parte sorte (viés
 do vencedor). Por isso, ao fim de cada busca são escolhidas duas configurações, a de menor $p95_{\text{fit}}$ e a mais
 barata que atendeu o SLO. Cada uma é remedida 5 vezes, em contêineres novos, e o H3 usa somente essas remedições.
+
+Em cada rodada de remedição, a configuração padrão também é medida, logo depois das escolhidas (\emph{controle pareado}).
+O H3 compara cada configuração com a padrão medida nas mesmas rodadas, e não com as baselines medidas horas antes.
+Assim, uma variação lenta do host (temperatura, processos em segundo plano) afeta os dois lados da comparação. Esse
+controle foi introduzido depois que a primeira reavaliação do experimento reduzido foi invalidada justamente por esse
+problema (Seção~\ref{sec:sem-controle}).
 
 \subsection{Análise estatística}
 
@@ -220,10 +237,17 @@ Antes das buscas, três verificações de qualidade são aplicadas às baselines
 abaixo de 10\%, taxa $\lambda$ abaixo de 80\% da vazão medida da configuração padrão e CPU do gerador abaixo de 75\% dos seus 4 núcleos.
 
 \subsection{Orçamento de tempo}
+\label{sec:metodologia-reduzida}
 
 Cada avaliação leva cerca de \SI{85}{s}. Com 4 linguagens, 2 endpoints, 2 métodos e 5 sementes de 96 avaliações,
-mais baselines e reavaliações, o experimento completo leva cerca de 203 horas (8,5 dias). Restrito ao endpoint
-\texttt{/cpu}, cerca de 102 horas. \pend{escopo efetivamente executado}
+mais baselines e reavaliações com controle pareado, o experimento completo leva cerca de 216 horas (9 dias).
+Restrito ao endpoint \texttt{/cpu}, cerca de 108 horas.
+
+Como o host dedicado não estava disponível, foi executado um \textbf{experimento reduzido} que cabe em cerca de duas horas:
+Go e Python (a linguagem mais rápida e a mais lenta no piloto), apenas o endpoint \texttt{/cpu}, 3 sementes por método,
+população de 6 por 4 gerações (24 avaliações por busca), baselines com 4 repetições e 3 rodadas de reavaliação. Cada
+avaliação foi encurtada para \SI{5}{s} de aquecimento, uma medição de \SI{8}{s} e \SI{5}{s} de saturação (cerca de
+\SI{21}{s} no total). As buscas e as baselines levaram 1,3 h, e a reavaliação com controle pareado, mais 0,6 h.
 
 %======================================================================
 \section{Estudo piloto}
@@ -281,67 +305,80 @@ O piloto também revelou quatro problemas:
 \end{enumerate}
 
 %======================================================================
-\section{Resultados}
+\section{Resultados do experimento reduzido}
+\label{sec:resultados}
 %======================================================================
 
-\pend{preencher com a saída de \texttt{analysis/analyze.py} sobre os dados do host Linux}
+Os números abaixo são a saída de \texttt{analysis/analyze.py} sobre \texttt{results/reduzido}. Por causa do ambiente
+e do tamanho da amostra (Seção~\ref{sec:metodologia-reduzida}), eles devem ser lidos como uma demonstração do
+procedimento completo com dados reais, e não como a resposta definitiva às hipóteses.
 
 \subsection{Qualidade das medições}
-\pend{CV das baselines, razão $\lambda$/vazão e CPU do k6; indicar se algum par foi recalibrado}
+
+As baselines de Python foram estáveis (CV do p95 entre 2\% e 5\%). As de Go, não: a configuração padrão teve CV de
+85\% no p95 (de \SI{1,0}{ms} a \SI{8,3}{ms} em quatro repetições) e a manual, de 12\%. A taxa $\lambda$ ficou em 75\% da
+vazão medida da padrão em Go e em 50\% em Python, abaixo do limite de 80\%. A CPU do k6 não passou de 136\% (1,4 núcleo),
+longe do limite de 300\%. Houve 20 avaliações inválidas nas buscas, todas em Python (11 do GA e 9 da aleatória), por falta
+de memória com \SI{128}{MB} e vários workers do gunicorn.
+
+Em Go, a vazão de saturação na calibração (\SI{13873}{req/s}) foi maior que a medida nas baselines (mediana de
+\SI{9298}{req/s}), o que deixou $\lambda = \SI{6936}{req/s}$ mais perto da capacidade do que o planejado. Nessa
+faixa, as medições de Go se mostraram bimodais: ou o serviço absorve a carga com p95 de cerca de \SI{1}{ms}, ou
+entra em fila, com p95 de centenas de milissegundos e chegadas descartadas.
 
 \subsection{H1: diferenças entre linguagens}
 
 \begin{table}[ht]
 \centering
-\caption{Configuração padrão no host Linux (10 repetições).}
+\caption{Configuração padrão no endpoint \texttt{/cpu} (4 repetições, medianas).}
 \label{tab:h1}
-\begin{tabular}{llrrr}
+\begin{tabular}{lrrrr}
 \toprule
-Endpoint & Linguagem & vazão (req/s) & p95 a 50\% (ms) & p95 taxa comum (ms) \\
+Linguagem & $\lambda$ (req/s) & vazão (req/s) & p95 a $\lambda$ (ms) & p95 a \SI{86}{req/s} (ms) \\
 \midrule
-\texttt{/cpu} & Go & \pend{} & & \\
- & Java & & & \\
- & Node & & & \\
- & Python & & & \\
-\midrule
-\texttt{/io} & Go & & & \\
- & Java & & & \\
- & Node & & & \\
- & Python & & & \\
+Go     & 6936 & 9298 & 4,10 & 1,82 \\
+Python & 86   & 171  & 6,39 & 6,44 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\pend{$H$, $p$ e $\varepsilon^2$ por métrica e endpoint; deltas de Cliff par a par}
+A vazão de saturação de Go foi 54 vezes a de Python ($H = 5{,}33$, $p = 0{,}021$, $\varepsilon^2 = 0{,}72$, $\delta$ de
+Cliff $= +1$, sem sobreposição entre as amostras). Na mesma carga absoluta (\SI{86}{req/s}, a taxa comum), Go respondeu
+3,5 vezes mais rápido ($p = 0{,}021$, $\varepsilon^2 = 0{,}72$). Já o p95 a 50\% da capacidade de cada linguagem não
+diferiu ($H = 0$, $p = 1$): cada serviço, carregado em proporção à própria capacidade, ficou com latência na mesma faixa.
+Com 4 repetições por grupo, $H = 5{,}33$ é o maior valor possível, o que dá o menor $p$ possível para esse desenho.
+O H1 é confirmado para vazão e latência sob carga absoluta igual.
 
 \subsection{H2: NSGA-II contra busca aleatória}
 
 \begin{table}[ht]
 \centering
-\caption{Hipervolume normalizado (média de 5 sementes) e teste de Mann-Whitney unilateral (GA $>$ aleatória).}
+\caption{Hipervolume normalizado (média de 3 sementes), teste de Mann-Whitney unilateral (GA $>$ aleatória) e custo
+da configuração mais barata que atendeu o SLO durante a busca (mediana das sementes; padrão $= 6$).}
 \label{tab:h2}
-\begin{tabular}{llrrrr}
+\begin{tabular}{lrrrrrr}
 \toprule
-Endpoint & Linguagem & HV GA & HV aleatória & $p$ & $\delta$ de Cliff \\
+Linguagem & HV GA & HV aleatória & $p$ & $\delta$ de Cliff & custo GA & custo aleatória \\
 \midrule
-\texttt{/cpu} & Go & \pend{} & & & \\
- & Java & & & & \\
- & Node & & & & \\
- & Python & & & & \\
-\midrule
-\texttt{/io} & Go & & & & \\
- & Java & & & & \\
- & Node & & & & \\
- & Python & & & & \\
+Go     & 0,585 & 0,528 & 0,50 & $+0{,}11$ & 5,00 & 3,19 \\
+Python & 0,719 & 0,629 & 0,35 & $+0{,}33$ & 1,12 & 0,94 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
+O NSGA-II teve hipervolume médio maior nos dois casos (Tabela~\ref{tab:h2}), com efeito pequeno em Go e médio em Python,
+mas sem significância. Com 3 sementes por método, o menor $p$ possível do teste unilateral é $1/\binom{6}{3} = 0{,}05$,
+de modo que o H2 só poderia ser confirmado se todas as sementes do GA superassem todas as da aleatória. A
+Figura~\ref{fig:conv} mostra que o GA ficou abaixo da linha do SLO até a terceira avaliação em todas as sementes,
+enquanto a aleatória levou de 1 a 13 avaliações e, numa semente de Go, não chegou a ficar. Como a primeira geração do GA
+também é sorteada, essa diferença inicial é em parte sorte, e não deve ser lida como evidência a favor do H2. Com orçamento de 24 avaliações e 1 núcleo bastando para
+Python, a busca aleatória encontra configurações baratas com facilidade: o espaço tem muitas soluções boas.
+
 \begin{figure}[ht]
 \centering
-% \includegraphics[width=\linewidth]{../results/convergence.png}
-\fbox{\parbox{0.9\linewidth}{\centering\vspace{2cm}\pend{figura \texttt{results/convergence.png}}\vspace{2cm}}}
-\caption{Melhor $p95_{\text{fit}}$ ao longo das avaliações, por semente. Azul: NSGA-II; cinza: busca aleatória.}
+\includegraphics[width=\linewidth]{../results/reduzido/convergence.png}
+\caption{Melhor $p95_{\text{fit}}$ ao longo das avaliações, por semente (escala logarítmica). Azul: NSGA-II; cinza:
+busca aleatória; tracejado: SLO.}
 \label{fig:conv}
 \end{figure}
 
@@ -349,52 +386,94 @@ Endpoint & Linguagem & HV GA & HV aleatória & $p$ & $\delta$ de Cliff \\
 
 \begin{table}[ht]
 \centering
-\caption{Resultados das remedições independentes (5 por configuração escolhida).}
+\caption{Remedições com controle pareado (3 rodadas por semente). Redução do p95 da configuração de menor p95 em
+relação à padrão medida nas mesmas rodadas (negativo = piorou), com IC de 95\% por bootstrap; economia de custo da
+configuração mais barata dentro do SLO e fração das remedições que atendeu o SLO (entre parênteses, a da padrão).}
 \label{tab:h3}
-\begin{tabular}{llrrr}
+\small
+\setlength{\tabcolsep}{3.5pt}
+\begin{tabular}{llrrrrr}
 \toprule
-Endpoint & Linguagem & redução do p95 [IC 95\%] & economia de custo & atende o SLO \\
+Linguagem & Método & p95 (ms) & padrão (ms) & redução do p95 [IC 95\%] & economia & atende o SLO \\
 \midrule
-\texttt{/cpu} & Go & \pend{} & & \\
- & Java & & & \\
- & Node & & & \\
- & Python & & & \\
+Go     & GA        & 36,17 & 1,44   & $-2406\%$ [$-11783\%$; $+51\%$] & 17\% & 67\% (22\%) \\
+       & aleatória & 198,14 & 109,39 & $-81\%$ [$-22349\%$; $+36\%$]  & 47\% & 17\% (44\%) \\
 \midrule
-\texttt{/io} & Go & & & \\
- & Java & & & \\
- & Node & & & \\
- & Python & & & \\
+Python & GA        & 7,77  & 7,90   & $+1{,}5\%$ [$-7{,}5\%$; $+4{,}8\%$] & 81\% & 89\% (89\%) \\
+       & aleatória & 6,48  & 6,49   & $0{,}0\%$ [$-10{,}4\%$; $+1{,}9\%$] & 84\% & 89\% (100\%) \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-\pend{Kruskal-Wallis entre linguagens sobre os ganhos por semente; configurações encontradas (ex.: valor de \texttt{workers} e \texttt{cpus} típico por linguagem)}
+\paragraph{Python.} O ajuste não reduziu a latência: o p95 das configurações escolhidas ficou igual ao da padrão
+(diferença de $+1{,}5\%$ e $0\%$, com $p = 0{,}79$ e $0{,}86$). O ganho real foi de custo. A configuração mais barata
+dentro do SLO usou cerca de 1 CPU e de \SI{128}{} a \SI{256}{MB} (custo 0,94--1,12 contra 6 da padrão, ou 81--84\% a menos)
+e atendeu o SLO na mesma proporção que a padrão. A configuração de menor p95 encontrada pelo GA (em duas das três sementes, com 3 a 3,5 CPUs
+e 6 a 12 workers) quase dobrou a vazão de saturação (mediana de $+92\%$), mas sem reduzir o p95.
+
+\paragraph{Go.} Só uma das configurações escolhidas se sustentou: a da semente 0 do GA (3,5 CPUs, 4 núcleos, 6 threads,
+\SI{1,5}{GB}), com p95 de \SI{0,88}{ms} contra \SI{0,94}{ms} da padrão e custo 17\% menor. As demais tinham 2 a 3 CPUs e
+mediram cerca de \SI{0,9}{ms} na busca, mas, remedidas, deram de \SI{25}{ms} a \SI{375}{ms}, com 10\% a 39\% de chegadas
+descartadas. Com 2 a 2,5 CPUs, a vazão de saturação de Go ficou entre \SI{4400}{} e \SI{6800}{req/s}, abaixo de
+$\lambda = \SI{6936}{req/s}$: essas configurações estão sobrecarregadas, e o p95 baixo na busca foi uma medição de sorte.
+É o viés do vencedor que a reavaliação foi desenhada para detectar. Além disso, nas rodadas da busca aleatória, a própria
+configuração padrão chegou a \SI{109}{ms} e \SI{199}{ms}, o que mostra períodos de instabilidade do host.
+
+O critério ``nenhuma chegada descartada'' do SLO se mostrou rígido demais para Go a quase \SI{7000}{req/s}: a padrão
+atendeu o SLO em só 22\% a 44\% das rodadas, quase sempre por descartes de cerca de 0,1\% das chegadas.
+
+\paragraph{Dependência da linguagem.} A mediana da economia de custo do GA foi de 81\% em Python e 17\% em Go
+($H = 1{,}80$, $p = 0{,}18$, $\varepsilon^2 = 0{,}40$). A direção é a esperada, mas com 3 sementes por linguagem não há
+significância, e o efeito da carga (\texttt{/cpu} contra \texttt{/io}) não foi avaliado no experimento reduzido. O H3 fica
+sem conclusão, com indícios a favor na economia de custo e contra na latência.
+
+\subsection{A reavaliação sem controle pareado}
+\label{sec:sem-controle}
+
+Na primeira reavaliação, as configurações escolhidas foram comparadas com a padrão das baselines, medida duas horas
+antes. Em Go, todas as escolhidas deram de \SI{318}{ms} a \SI{731}{ms}, com 14\% a 46\% de descartes, o que
+indicaria uma piora de mais de 100 vezes. Uma medição de controle feita logo depois mostrou a padrão, a manual e a
+melhor do GA, todas entre \SI{0,9}{ms} e \SI{1,7}{ms}, sem descartes. A degradação era do host, durante os cerca de 10
+minutos da reavaliação, e não das configurações. Os dados dessa primeira reavaliação estão preservados em
+\texttt{results/reduzido/reeval\_sem\_controle/}. Esse episódio motivou o controle pareado da Seção~\ref{sec:metodologia-reavaliacao}.
 
 %======================================================================
 \section{Discussão}
 %======================================================================
 
-\pend{interpretar H1--H3 à luz dos resultados}
+Os resultados confirmam as expectativas formuladas antes do experimento. Em Python, a configuração padrão (1 worker com
+4 threads) já usa essencialmente um núcleo, e a carga de \SI{86}{req/s} (metade da capacidade desse worker) não precisa
+de mais do que isso. A padrão reserva 4 núcleos e \SI{2}{GB} que ficam ociosos, e é daí que vem a economia de 81\%.
+Mais workers aumentam a vazão de saturação, mas não reduzem o p95, que é dominado pelo tempo de serviço de
+$\mathrm{fib}(25)$ em Python (cerca de \SI{6,5}{ms}). Ajustar não deixa o serviço mais rápido, deixa-o mais barato.
 
-Algumas expectativas podem ser formuladas antes dos resultados. As configurações padrão de Python (1 worker com
-4 threads) e de Node (1 processo) usam essencialmente um núcleo. Nessas linguagens, boa parte do ganho deve vir apenas de
-aumentar \texttt{workers}, o que favorece o H3 por construção, mas reflete o comportamento real dessas plataformas.
-Em Go e Java, que já usam todos os núcleos visíveis por padrão, espera-se que o ganho venha sobretudo da \emph{redução
-de custo} sob o SLO, e não da latência. Como os endpoints não alocam memória, o gene \texttt{mem\_mb} deve convergir
-para o menor valor que não provoca OOM, exceto no Java, onde ele interage com \texttt{heap\_pct}.
+Em Go, que já usa todos os núcleos visíveis, a taxa de 75\% da capacidade deixa pouca folga, e qualquer cota abaixo
+de cerca de 3 CPUs sobrecarrega o serviço. A busca encontrou configurações baratas que pareciam ótimas porque, perto da
+capacidade, uma medição curta pode cair no modo ``sem fila'' por sorte. A margem de ajuste real em Go é pequena (17\%),
+e isso só foi possível concluir com a reavaliação.
+
+O experimento reduzido valida, com dados reais, três decisões do desenho: (i) a reavaliação independente, sem a qual
+seriam reportadas economias de 47\% em Go que não se sustentam; (ii) o controle pareado, sem o qual a reavaliação teria
+reportado uma piora de 100 vezes que não existia; e (iii) as verificações de qualidade, que sinalizaram o CV de 85\% de Go
+antes de qualquer conclusão. Também indica dois ajustes para o experimento final: calibrar $\lambda$ com a vazão medida nas
+baselines (e não só na calibração) e tolerar uma pequena fração de descartes no SLO (por exemplo, até 0,5\%).
 
 \subsection{Ameaças à validade}
 
 \begin{itemize}
   \item \textbf{Validade interna:} o ruído de medição pode mascarar diferenças entre configurações. Isso é mitigado pelo
-    isolamento de núcleos, pelo governor fixo, pelo teste A/A, pelas repetições e pela reavaliação independente. O cache
-    de genomas repetidos pode preservar uma medição sortuda dentro de uma execução; a reavaliação corrige isso nas conclusões.
+    isolamento de núcleos, pelo governor fixo, pelo teste A/A, pelas repetições, pela reavaliação independente e pelo
+    controle pareado. O cache de genomas repetidos pode preservar uma medição sortuda dentro de uma execução; a
+    reavaliação corrige isso nas conclusões. No experimento reduzido, contêineres de outro projeto estavam em execução
+    durante a calibração e as primeiras baselines, e o ambiente virtualizado do macOS não permite fixar a frequência.
   \item \textbf{Validade de construto:} os endpoints são sintéticos. O \texttt{/io} simula a espera sem um banco de dados
     real, e o \texttt{/cpu} não exercita o coletor de lixo. O custo ignora o valor de mercado relativo entre CPU e memória.
   \item \textbf{Validade externa:} os resultados valem para um host de 8 núcleos, um único serviço por vez e as versões
     de linguagem e servidor usadas; não necessariamente se estendem a clusters Kubernetes com vizinhos ruidosos.
-  \item \textbf{Validade de conclusão:} 5 sementes por método dão poder estatístico limitado. Por isso, os tamanhos de
-    efeito são reportados junto com os $p$-valores.
+    O experimento reduzido cobre só duas linguagens e um endpoint.
+  \item \textbf{Validade de conclusão:} 3 sementes por método (5 no desenho completo) dão poder estatístico limitado,
+    e medições de \SI{8}{s} são mais ruidosas que as de \SI{20}{s} planejadas. Por isso, os tamanhos de efeito são
+    reportados junto com os $p$-valores.
 \end{itemize}
 
 %======================================================================
@@ -404,7 +483,15 @@ para o menor valor que não provoca OOM, exceto no Java, onde ele interage com \
 Este trabalho apresentou um ambiente e um desenho experimental para avaliar o ajuste multiobjetivo de recursos de
 contêineres em quatro linguagens. O estudo piloto confirmou diferenças grandes de desempenho entre linguagens e mostrou
 que medir sem verificações de qualidade leva a conclusões erradas: um serviço sobrecarregado sem que ninguém perceba,
-ruído maior que o efeito a medir e um gerador de carga que limita o que se mede. \pend{conclusões de H2 e H3}
+ruído maior que o efeito a medir e um gerador de carga que limita o que se mede.
+
+O experimento reduzido, com Go e Python, confirmou o H1 (vazão 54 vezes maior em Go). O NSGA-II teve hipervolume maior
+que a busca aleatória e atingiu o SLO em menos avaliações, mas sem significância com 3 sementes (H2 inconclusivo). O
+ganho do ajuste foi de custo, não de latência, e dependeu da linguagem na direção esperada: 81\% de economia em Python,
+contra 17\% em Go, onde a maioria das configurações escolhidas pela busca não se sustentou na remedição (H3 inconclusivo,
+com indícios a favor). A lição metodológica principal é que, num serviço perto da capacidade, o melhor resultado de uma
+busca ruidosa tende a ser sorte, e só uma remedição pareada com a configuração padrão separa o efeito da configuração do
+estado do host.
 
 Como trabalhos futuros, ficam a inclusão de um endpoint que aloque memória (para exercitar o coletor de lixo), o uso de
 um banco de dados real no endpoint de I/O, a comparação com otimização bayesiana~\cite{alipourfard2017} e a execução

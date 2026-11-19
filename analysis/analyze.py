@@ -180,7 +180,11 @@ if not len(reeval):
     print("  no re-evaluations yet (python run_experiment.py reeval). Search-log minima are optimistic, not reported.")
 per_seed = []
 for (lang, ep, m), g in reeval.groupby(["lang", "endpoint", "method"]):
-    d = default[(default.lang == lang) & (default.endpoint == ep)]
+    # Prefer the default re-measured in the same rounds (paired control); fall back to the baseline runs
+    d = g[g.pick == "default"]
+    ref = "default re-measured alongside"
+    if not len(d):
+        d, ref = default[(default.lang == lang) & (default.endpoint == ep)], "baseline default"
     if not len(d):
         continue
     best = g[g.pick == "best_p95"]
@@ -188,18 +192,21 @@ for (lang, ep, m), g in reeval.groupby(["lang", "endpoint", "method"]):
         gain, lo, hi = boot_gain(best.p95, d.p95)
         tgain = best.thr.median() / d.thr.median() - 1
         _, p = stats.mannwhitneyu(best.p95, d.p95, alternative="two-sided")
-        print(f"  {lang}/{ep} {m:6s} best_p95: p95 -{gain:.1%} [95% CI {lo:.1%}, {hi:.1%}] vs default "
+        print(f"  {lang}/{ep} {m:6s} best_p95: p95 {best.p95.median():.2f} vs {d.p95.median():.2f} ms ({ref}), "
+              f"reduction {gain:+.1%} [95% CI {lo:+.1%}, {hi:+.1%}] "
               f"(MWU p={fmt_p(p)}, cliffs={cliffs_delta(best.p95, d.p95):+.2f}), throughput {tgain:+.1%}")
     cheap = g[g.pick == "min_cost_slo"]
     if len(cheap):
         meets = np.mean((cheap.p95_fit <= slo[(lang, ep)]) & (cheap["drop"] == 0))
         saving = 1 - cheap.cost.median() / DEFAULT_COST
+        d_meets = np.mean((d.p95_fit <= slo[(lang, ep)]) & (d["drop"] == 0))
         print(f"  {lang}/{ep} {m:6s} min_cost_slo: cost {cheap.cost.median():.2f} ({saving:.0%} below default), "
-              f"meets SLO in {meets:.0%} of re-measurements")
+              f"meets SLO in {meets:.0%} of re-measurements (default: {d_meets:.0%})")
     for s, gs in g.groupby("seed"):
-        b, c = gs[gs.pick == "best_p95"], gs[gs.pick == "min_cost_slo"]
+        b, c, ds = gs[gs.pick == "best_p95"], gs[gs.pick == "min_cost_slo"], gs[gs.pick == "default"]
+        ds = ds if len(ds) else d
         per_seed.append(dict(lang=lang, endpoint=ep, method=m, seed=s,
-                             p95_gain=1 - b.p95.median() / d.p95.median() if len(b) else np.nan,
+                             p95_gain=1 - b.p95.median() / ds.p95.median() if len(b) else np.nan,
                              cost_saving=1 - c.cost.median() / DEFAULT_COST if len(c) else np.nan))
 if per_seed:
     ps = pd.DataFrame(per_seed)
@@ -216,22 +223,32 @@ try:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    from matplotlib.lines import Line2D
+
     runs = df[df.kind.isin(["ga", "random"])]  # includes invalid rows, so the x-axis is the true evaluation index
     groups = list(runs.groupby(["lang", "endpoint"]))
     if groups:
-        cols = max(1, (len(groups) + 1) // 2)
-        fig, axes = plt.subplots(2, cols, figsize=(4 * cols, 7), sharex=True, squeeze=False)
+        cols = min(4, len(groups))
+        rows = (len(groups) + cols - 1) // cols
+        fig, axes = plt.subplots(rows, cols, figsize=(4.2 * cols, 3.4 * rows), squeeze=False)
         for ax in axes.flatten()[len(groups):]:
             ax.set_visible(False)
         for ax, ((lang, ep), g) in zip(axes.flatten(), groups):
-            for m, c in [("ga", "tab:blue"), ("random", "tab:gray")]:
+            for m, c in [("random", "#9a9a9a"), ("ga", "#1f6fb4")]:
                 for _, s in g[g.method == m].groupby("seed"):
-                    ax.plot(s.i.values, s.p95_fit.cummin().values, color=c, alpha=0.6)
-            ax.set_title(f"{lang}/{ep}")
+                    ax.step(s.i.values + 1, s.p95_fit.cummin().values, where="post", color=c, alpha=0.85, lw=1.6)
+            if (lang, ep) in slo:
+                ax.axhline(slo[(lang, ep)], color="#c0392b", ls="--", lw=1)
+            ax.set_title(f"{lang} {ep}")
             ax.set_yscale("log")
-        fig.supxlabel("evaluation #")
-        fig.supylabel("best p95 (fitness) so far, ms   blue=GA  gray=random")
-        fig.savefig(f"{RES}/convergence.png", dpi=120, bbox_inches="tight")
+            ax.set_xlabel("avaliação")
+            ax.grid(alpha=0.3, which="major")
+        axes[0][0].set_ylabel("melhor p95 de fitness até aqui (ms)")
+        fig.legend([Line2D([], [], color="#1f6fb4", lw=2), Line2D([], [], color="#9a9a9a", lw=2),
+                    Line2D([], [], color="#c0392b", ls="--")], ["NSGA-II", "busca aleatória", "SLO"],
+                   loc="upper center", ncol=3, frameon=False, bbox_to_anchor=(0.5, 1.06))
+        fig.tight_layout()
+        fig.savefig(f"{RES}/convergence.png", dpi=160, bbox_inches="tight")
         print(f"\nsaved {RES}/convergence.png")
 except ImportError:
     pass
