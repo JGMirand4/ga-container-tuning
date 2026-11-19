@@ -1,0 +1,11 @@
+method,lang,endpoint,seed,gen,genes,ok,p95,p99,thr
+default,python,cpu,0,0,{},True,6.2636122,7.20063956,172.59218540939142
+default,python,cpu,0,1,{},True,6.309584,10.5645168,172.3361233113795
+default,python,cpu,0,2,{},True,6.188917,7.2270416,172.32157035513424
+default,python,cpu,0,3,{},True,6.5505,13.3518752,166.47735004205344
+default,python,cpu,0,4,{},True,6.172,7.181950559999999,164.1435554937908
+manual,python,cpu,0,0,"{""cpus"": 4.0, ""mem_mb"": 1024, ""cpuset"": 4, ""workers"": 4}",True,6.140458,6.8429582,591.2269316042066
+manual,python,cpu,0,1,"{""cpus"": 4.0, ""mem_mb"": 1024, ""cpuset"": 4, ""workers"": 4}",True,6.217542,7.0097586,587.3730613661386
+manual,python,cpu,0,2,"{""cpus"": 4.0, ""mem_mb"": 1024, ""cpuset"": 4, ""workers"": 4}",True,6.155333,6.9055998,590.0413190286155
+manual,python,cpu,0,3,"{""cpus"": 4.0, ""mem_mb"": 1024, ""cpuset"": 4, ""workers"": 4}",True,6.21175,7.073283399999999,597.9902226706569
+manual,python,cpu,0,4,"{""cpus"": 4.0, ""mem_mb"": 1024, ""cpuset"": 4, ""workers"": 4}",True,6.255375,7.972258199999991,578.05168844778
